@@ -1,27 +1,26 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { doc, deleteDoc } from "firebase/firestore";
-import { db } from "../firebase";
+import { postService } from "../services/postService";
 import toast from "react-hot-toast";
-import { motion } from "framer-motion";
+import { FiTrash2, FiEdit2, FiHeart, FiMessageSquare, FiClock } from "react-icons/fi";
 
-function PostCard({ post, onDelete }) {
+
+// React.memo to prevent unnecessary re-renders
+const PostCard = React.memo(({ post, onDelete }) => {
   const { user, isAuthenticated } = useAuth();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const itemVariants = {
-    hidden: { y: 20, opacity: 0 },
-    visible: { y: 0, opacity: 1 },
-  };
+  // Local state for likes
+  const [likes, setLikes] = useState(post.likes || []);
+  const isLiked = isAuthenticated && user?.uid && likes.includes(user.uid);
 
   const handleDelete = async () => {
     setIsDeleting(true);
     const deleteToast = toast.loading("Deleting post...");
     try {
-      const postDocRef = doc(db, "posts", post.id);
-      await deleteDoc(postDocRef);
+      await postService.deletePost(post.id);
       onDelete(post.id);
       toast.success("Post deleted successfully!", { id: deleteToast });
     } catch (error) {
@@ -32,105 +31,140 @@ function PostCard({ post, onDelete }) {
     }
   };
 
+  const onLikeClick = async (e) => {
+    e.preventDefault();
+    if (!isAuthenticated) return toast.error("Please login to like");
+
+    const userId = user.uid;
+    const previousLikes = [...likes];
+
+    // Optimistic Update
+    if (isLiked) {
+      setLikes(likes.filter(id => id !== userId));
+    } else {
+      setLikes([...likes, userId]);
+    }
+
+    try {
+      await postService.toggleLike(post.id, userId);
+    } catch (err) {
+      setLikes(previousLikes); // Revert
+      toast.error("Something went wrong");
+    }
+  }
+
   return (
     <>
-      <motion.div
-        variants={itemVariants}
-        whileHover={{ scale: 1.03, transition: { duration: 0.2 } }}
-      >
-        <div className="card card-side bg-base-100 shadow-lg border flex-row">
-          <figure className="w-48 h-48 flex-shrink-0">
-            <img
-              src={post.imageUrl}
-              alt={post.title}
-              className="w-full h-full object-cover"
-            />
-          </figure>
-          <div className="card-body p-6 flex flex-col justify-between">
-            <div>
-              <h2 className="card-title text-2xl font-bold">{post.title}</h2>
-              <p className="mt-2 text-gray-600 line-clamp-2">
-                {post.description}
-              </p>
-              <hr className="my-3" />
-              <div className="flex items-center gap-2 text-gray-500">
-                {post.authorPhotoURL ? (
-                  <img
-                    src={post.authorPhotoURL}
-                    alt={post.authorName}
-                    className="w-6 h-6 rounded-full object-cover"
-                  />
-                ) : (
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="h-6 w-6"
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                )}
-                <span>{post.authorName}</span>
-              </div>
-            </div>
-            {isAuthenticated && user.uid === post.userId && (
-              <div className="card-actions justify-end">
-                <Link
-                  to={`/edit-post/${post.id}`}
-                  className="btn btn-sm btn-outline btn-info"
-                >
-                  Edit
-                </Link>
-                <button
-                  onClick={() => setIsModalOpen(true)}
-                  className="btn btn-sm btn-outline btn-error"
-                >
-                  Remove
-                </button>
-              </div>
-            )}
+      <div className="clean-card h-full flex flex-col group relative bg-white border border-gray-100 shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all duration-200">
+        {/* Actions Overlay (Admin) */}
+        {isAuthenticated && user?.uid === post.userId && (
+          <div className="absolute top-3 right-3 z-10 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white p-1.5 rounded-full shadow-sm border border-gray-100">
+            <Link
+              to={`/edit-post/${post.id}`}
+              className="btn btn-xs btn-ghost btn-circle text-info"
+              title="Edit"
+            >
+              <FiEdit2 />
+            </Link>
+            <button
+              onClick={() => setIsModalOpen(true)}
+              className="btn btn-xs btn-ghost btn-circle text-error"
+              title="Delete"
+            >
+              <FiTrash2 />
+            </button>
           </div>
-        </div>
-      </motion.div>
+        )}
 
-      <dialog open={isModalOpen} className="modal">
-        <div className="modal-box">
-          <h3 className="font-bold text-lg">Confirm Deletion</h3>
-          <p className="py-4">
-            Are you sure you want to delete this post? This action cannot be
-            undone.
+        {/* Image */}
+        <Link to={`/post/${post.id}`} className="block overflow-hidden relative aspect-video bg-gray-100">
+          <img
+            src={post.imageUrl || "https://placehold.co/800x600?text=No+Image"}
+            alt={post.title}
+            loading="lazy"
+            decoding="async"
+            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+          />
+        </Link>
+
+        {/* Content */}
+        <div className="p-5 flex flex-col flex-1">
+          <div className="flex items-center justify-between mb-3 text-xs text-gray-400 font-semibold uppercase tracking-wider">
+            <span>{post.category || "Article"}</span>
+            <div className="flex items-center gap-1">
+              <FiClock className="w-3 h-3" />
+              <span>{post.createdAt?.toDate ? new Date(post.createdAt.toDate()).toLocaleDateString() : 'Just now'}</span>
+            </div>
+          </div>
+
+          <Link to={`/post/${post.id}`} className="group-hover:text-primary transition-colors">
+            <h2 className="text-xl font-bold mb-2 leading-tight line-clamp-2 text-gray-900">{post.title}</h2>
+          </Link>
+
+          <p className="text-gray-500 line-clamp-3 mb-6 text-sm flex-1 leading-relaxed">
+            {post.description}
           </p>
-          <div className="modal-action">
-            <button
-              className="btn"
-              onClick={() => setIsModalOpen(false)}
-              disabled={isDeleting}
-            >
-              Cancel
-            </button>
-            <button
-              className="btn btn-error"
-              onClick={handleDelete}
-              disabled={isDeleting}
-            >
-              {isDeleting ? (
-                <span className="loading loading-spinner"></span>
-              ) : (
-                "Delete"
-              )}
-            </button>
+
+          {/* Footer */}
+          <div className="flex items-center justify-between pt-4 border-t border-gray-50 mt-auto">
+            <Link to={`/user/${post.userId}`} className="flex items-center gap-2 group/author hover:opacity-80 transition-opacity">
+              <div className="avatar">
+                <div className="w-8 rounded-full ring-1 ring-gray-100">
+                  <img
+                    src={post.authorPhotoURL || `https://ui-avatars.com/api/?name=${post.authorName}`}
+                    alt={post.authorName}
+                  />
+                </div>
+              </div>
+              <span className="text-sm font-semibold text-gray-700 group-hover/author:text-primary transition-colors">{post.authorName}</span>
+            </Link>
+
+            <div className="flex gap-4 text-gray-400">
+              <button
+                onClick={onLikeClick}
+                className={`flex items-center gap-1.5 transition-colors ${isLiked ? 'text-red-500' : 'hover:text-red-500'}`}
+              >
+                <FiHeart className={`w-4 h-4 ${isLiked ? "fill-current" : ""}`} />
+                <span className="text-sm font-medium">{likes.length || 0}</span>
+              </button>
+              <Link to={`/post/${post.id}`} className="flex items-center gap-1.5 hover:text-blue-500 transition-colors">
+                <FiMessageSquare className="w-4 h-4" />
+                <span className="text-sm font-medium">{post.commentsCount || 0}</span>
+              </Link>
+            </div>
           </div>
         </div>
-        <form method="dialog" className="modal-backdrop">
-          <button onClick={() => setIsModalOpen(false)}>close</button>
-        </form>
-      </dialog>
+      </div>
+
+      {/* Delete Confirmation Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="modal-box rounded-2xl shadow-2xl p-6 bg-white max-w-sm w-full">
+            <h3 className="font-bold text-xl text-gray-800 mb-2">Delete Story?</h3>
+            <p className="text-gray-500 mb-6">
+              This action cannot be undone. Are you sure you want to remove this post?
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                className="btn btn-ghost text-gray-500 hover:bg-gray-100"
+                onClick={() => setIsModalOpen(false)}
+                disabled={isDeleting}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-error text-white"
+                onClick={handleDelete}
+                disabled={isDeleting}
+              >
+                {isDeleting ? <span className="loading loading-spinner"></span> : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
-}
+});
 
 export default PostCard;
